@@ -6,6 +6,7 @@ from data.price_loader import load_prices
 from indicators.indicators import compute_indicators
 from signals.signal_generator import generate_signal
 from sheets.sheet_manager import update_sheet
+from telegram_utils import send_telegram_message  # ✅ ADDED
 
 os.environ["SSL_CERT_FILE"] = certifi.where()
 os.environ["REQUESTS_CA_BUNDLE"] = certifi.where()
@@ -71,14 +72,20 @@ def run():
 
         if generate_signal(stock):
 
-            if symbol in signals_log["Symbol"].values:
+            # ✅ 3-MONTH RE-ENTRY LOGIC
+            recent_signal = signals_log[
+                (signals_log["Symbol"] == symbol) &
+                (pd.to_datetime(signals_log["Date"]) >= pd.Timestamp.today() - pd.Timedelta(days=90))
+            ]
+
+            if not recent_signal.empty:
                 continue
 
             last = stock.iloc[-1]
 
             bucket = universe[universe.symbol == symbol]["bucket"].values[0]
 
-            new_signals.append({
+            signal_data = {
 
                 "Date": last["Date"],
                 "Symbol": symbol,
@@ -92,7 +99,22 @@ def run():
                 "6M": None,
                 "ExitReason": None,
                 "FinalReturn": None
-            })
+            }
+
+            new_signals.append(signal_data)
+
+            # ✅ ENTRY TELEGRAM ALERT
+            message = f"""
+🚀 *NEW BUY SIGNAL*
+
+🏢 Stock: *{symbol}*
+📊 Bucket: {bucket}
+💰 Entry Price: `{round(last["Close"], 2)}`
+📅 Date: {last["Date"]}
+
+⚡ Strategy: EMA Signal Engine
+"""
+            send_telegram_message(message)
 
     if len(new_signals) > 0:
 
@@ -151,6 +173,18 @@ def run():
 
             signals_log.loc[i, "ExitReason"] = exit_reason
             signals_log.loc[i, "FinalReturn"] = (current_price - entry_price) / entry_price
+
+            # ✅ EXIT TELEGRAM ALERT
+            message = f"""
+❌ *EXIT SIGNAL*
+
+🏢 Stock: *{symbol}*
+📉 Reason: {exit_reason}
+💰 Exit Price: `{round(current_price, 2)}`
+📊 Return: `{round((current_price - entry_price) / entry_price * 100, 2)}%`
+📅 Entry Date: {entry_date.date()}
+"""
+            send_telegram_message(message)
 
         # forward return tracking
 
